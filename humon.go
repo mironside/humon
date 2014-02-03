@@ -35,12 +35,14 @@ func ScanTokens(data []byte, atEOF bool) (advance int, token []byte, err error) 
 	case '"':
 		// String
 		// Scan until close quote, marking end of string.
+		var prev rune
 		for width, i := 0, start+1; i < len(data); i += width {
 			var r rune
 			r, width = utf8.DecodeRune(data[i:])
-			if r == '"' {
+			if r == '"' && prev != '\\' {
 				return i + width, data[start : i+1], nil
 			}
+			prev = r
 		}
 	default:
 		// Word
@@ -61,7 +63,7 @@ func ScanTokens(data []byte, atEOF bool) (advance int, token []byte, err error) 
 	return 0, nil, nil
 }
 
-func convertDJSON(file *os.File) string {
+func convertHumon(file *os.File) string {
 
 	const (
 		None = iota
@@ -149,6 +151,9 @@ func dumpValue(v interface{}, depth int) {
 			fmt.Print("\n")
 		}
 		if depth > 0 {
+			for i := 0; i < depth-1; i++ {
+				fmt.Print("\t")
+			}
 			fmt.Print("}")
 		}
 	case []interface{}:
@@ -169,7 +174,7 @@ func dumpValue(v interface{}, depth int) {
 	case string:
 		b, _ := json.Marshal(t)
 		s := string(b)
-		if !strings.ContainsAny(s, " \t\\") {
+		if !strings.ContainsAny(s, " \t\\[]{}") {
 			s = s[1 : len(s)-1]
 		}
 		fmt.Print(s)
@@ -197,8 +202,8 @@ func main() {
 		json.Unmarshal(data, &d)
 		dumpValue(d, 0)
 	case "humon2json":
-		text := convertDJSON(file)
-		fmt.Print(text)
+		text := convertHumon(file)
+		fmt.Fprint(os.Stdout, text)
 	}
 	end := time.Now()
 	fmt.Fprint(os.Stderr, "\n", end.Sub(start))
