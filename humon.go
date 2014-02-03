@@ -178,21 +178,28 @@ func dumpValue(v interface{}, depth int) {
 }
 
 func main() {
-	file, err := os.Open(os.Args[1])
+	if len(os.Args) < 3 || (os.Args[1] != "json2humon" && os.Args[1] != "humon2json") {
+		fmt.Print("usage: humon.exe [json2humon|humon2json] <filename>\n")
+		return
+	}
+
+	file, err := os.Open(os.Args[2])
 	if err != nil {
 		fmt.Print("File Not Found\n")
 		return
 	}
 
-	var d map[string]interface{}
-	data, _ := ioutil.ReadAll(file)
-	json.Unmarshal(data, &d)
-	dumpValue(d, 0)
-	return
-
 	start := time.Now()
-	text := convertDJSON(file)
+	switch os.Args[1] {
+	case "json2humon":
+		var d map[string]interface{}
+		data, _ := ioutil.ReadAll(file)
+		json.Unmarshal(data, &d)
+		dumpValue(d, 0)
+	case "humon2json":
+		text := convertDJSON(file)
+		fmt.Print(text)
+	}
 	end := time.Now()
-	fmt.Print(text)
 	fmt.Fprint(os.Stderr, "\n", end.Sub(start))
 }
