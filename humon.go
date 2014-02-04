@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -14,7 +15,242 @@ import (
 	"unicode/utf8"
 )
 
-func ScanTokens(data []byte, atEOF bool) (advance int, token []byte, err error) {
+func ScanJsonTokens(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	// Skip leading spaces.
+	start := 0
+	for width := 0; start < len(data); start += width {
+		var r rune
+		r, width = utf8.DecodeRune(data[start:])
+		if !unicode.IsSpace(r) {
+			break
+		}
+	}
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	r, width := utf8.DecodeRune(data[start:])
+	switch r {
+	case '{', '}', '[', ']', ':', ',':
+		return start + width, data[start : start+width], nil
+	case '"':
+		// String
+		// Scan until close quote, marking end of string.
+		var prev rune
+		for width, i := 0, start+1; i < len(data); i += width {
+			var r rune
+			r, width = utf8.DecodeRune(data[i:])
+			if r == '"' && prev != '\\' {
+				return i + width, data[start : i+1], nil
+			}
+			prev = r
+		}
+	default:
+		// Word
+		// Scan until space, marking end of word.
+		for width, i := 0, start; i < len(data); i += width {
+			var r rune
+			r, width = utf8.DecodeRune(data[i:])
+			if unicode.IsSpace(r) || r == '{' || r == '}' || r == '[' || r == ']' || r == ':' || r == ',' {
+				return i, data[start:i], nil
+			}
+		}
+	}
+	// If we're at EOF, we have a final, non-empty, non-terminated word. Return it.
+	if atEOF && len(data) > start {
+		return len(data), data[start:], nil
+	}
+	// Request more data.
+	return 0, nil, nil
+}
+
+func parseString(data []byte) (int, string, error) {
+	end := 0
+	for end = 1; end < len(data); {
+		r, width := utf8.DecodeRune(data[end:])
+		end += width
+		if r == '"' && data[end-1] != '\\' {
+			break
+		}
+	}
+	return end, string(data[:end]), nil
+}
+
+func parseTrue(data []byte) (int, string, error) {
+	if string(data[:4]) == "true" {
+		return 4, "true", nil
+	} else {
+		return 0, "", errors.New("expected 'true'")
+	}
+
+}
+
+func parseFalse(data []byte) (int, string, error) {
+	if string(data[:5]) == "false" {
+		return 5, "false", nil
+	} else {
+		return 0, "", errors.New("expected 'false'")
+	}
+}
+
+func parseNull(data []byte) (int, string, error) {
+	if string(data[:4]) == "null" {
+		return 4, "null", nil
+	} else {
+		return 0, "", errors.New("expected 'null'")
+	}
+}
+
+func parseNumber(data []byte) (int, string, error) {
+	// @todo: fix!
+	end := 0
+	for end = 0; end < len(data); {
+		r, width := utf8.DecodeRune(data[end:])
+		if (r >= '0' && r <= '9') || r == '.' || r == 'e' || r == 'E' || r == '+' || r == '-' {
+			end += width
+		} else {
+			break
+		}
+	}
+	return end, string(data[:end]), nil
+}
+
+func parseObject(data []byte) (int, map[string]interface{}, error) {
+	return 0, map[string]interface{}{}, nil
+}
+
+func parseArray(data []byte) (int, []interface{}, error) {
+	fmt.Print("ARRAY!", data, "\n")
+	result := []interface{}{}
+	end := 0
+	for end = 1; end < len(data); {
+		r, width := utf8.DecodeRune(data[end:])
+		if r == ']' {
+			end += width
+			break
+		} else {
+			size, v, _ := parseValue(data[end:])
+			result = append(result, v)
+			end += size
+		}
+	}
+	return end, result, nil
+}
+
+func parseValue(data []byte) (int, interface{}, error) {
+	var v interface{}
+	var err error
+	var size int
+
+	i := 0
+	for i = 0; i < len(data); {
+		r, w := utf8.DecodeRune(data[i:])
+		if r != ' ' && r != '\t' && r != '\r' && r != '\n' {
+			break
+		}
+		i += w
+	}
+	fmt.Print(i, "\n")
+
+	r, _ := utf8.DecodeRune(data[i:])
+	switch r {
+	case '"':
+		size, v, err = parseString(data[i:])
+	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-':
+		size, v, err = parseNumber(data[i:])
+	case '{':
+		size, v, err = parseObject(data[i:])
+	case '[':
+		size, v, err = parseArray(data[i:])
+	case 't':
+		size, v, err = parseTrue(data[i:])
+	case 'f':
+		size, v, err = parseFalse(data[i:])
+	case 'n':
+		size, v, err = parseNull(data[i:])
+	}
+	fmt.Print(v, err, "\n")
+	if err != nil {
+		return 0, "", err
+	}
+	return i + size, v, nil
+}
+
+func convertJson(file *os.File) string {
+
+	const (
+		None = iota
+		Object_Open
+		Object_Key
+		Object_Value
+		Object_Close
+		Array_Open
+		Array_Element
+		Array_Close
+	)
+
+	scanner := bufio.NewScanner(file)
+	scanner.Split(ScanJsonTokens)
+
+	var result bytes.Buffer
+
+	stack := make([]int, 0, 100)
+	stack = append(stack, Object_Open)
+
+	for scanner.Scan() {
+		text := scanner.Text()
+		fmt.Print(text, "\n")
+
+		nextState := None
+		switch text {
+		case "{":
+			nextState = Object_Open
+		case "}":
+			stack[len(stack)-1] = Object_Close
+		case "[":
+			nextState = Array_Open
+		case "]":
+			stack[len(stack)-1] = Array_Close
+		default:
+			if text[0] != '"' {
+				if _, err := strconv.ParseInt(text, 10, 64); err == nil {
+				} else if _, err := strconv.ParseFloat(text, 64); err == nil {
+				} else if text == "true" || text == "false" || text == "null" {
+				} else {
+					text = "\"" + text + "\""
+				}
+			}
+		}
+
+		switch stack[len(stack)-1] {
+		case Array_Open:
+			stack[len(stack)-1] = Array_Element
+		case Array_Element:
+			result.WriteString(",")
+		case Array_Close:
+			stack = stack[:len(stack)-1]
+		case Object_Open:
+			stack[len(stack)-1] = Object_Key
+		case Object_Key:
+			stack[len(stack)-1] = Object_Value
+			result.WriteString(":")
+		case Object_Value:
+			stack[len(stack)-1] = Object_Key
+			result.WriteString(",")
+		case Object_Close:
+			stack = stack[:len(stack)-1]
+		}
+
+		if nextState > 0 {
+			stack = append(stack, nextState)
+		}
+		result.WriteString(text)
+	}
+
+	return "{" + result.String() + "}"
+}
+
+func ScanHumonTokens(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// Skip leading spaces.
 	start := 0
 	for width := 0; start < len(data); start += width {
@@ -77,7 +313,7 @@ func convertHumon(file *os.File) string {
 	)
 
 	scanner := bufio.NewScanner(file)
-	scanner.Split(ScanTokens)
+	scanner.Split(ScanHumonTokens)
 
 	var result bytes.Buffer
 
@@ -182,7 +418,17 @@ func dumpValue(v interface{}, depth int) {
 	}
 }
 
+func TestJsonTokenizer() {
+	file, _ := os.Open("C:/Users/colsen/Dropbox/test.json")
+	data, _ := ioutil.ReadAll(file)
+	fmt.Print(data, "\n")
+	_, v, err := parseValue(data)
+	fmt.Print(v, err)
+}
+
 func main() {
+	TestJsonTokenizer()
+
 	if len(os.Args) < 3 || (os.Args[1] != "json2humon" && os.Args[1] != "humon2json") {
 		fmt.Print("usage: humon.exe [json2humon|humon2json] <filename>\n")
 		return
