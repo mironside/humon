@@ -1,0 +1,100 @@
+{
+	web-app {
+		servlet [
+			{
+				servlet-name  cofaxCDS
+				servlet-class org.cofax.cds.CDSServlet
+				init-param {
+					templateProcessorClass          org.cofax.WysiwygTemplate
+					cacheTemplatesStore             50
+					cachePagesDirtyRead             10
+					searchEngineFileTemplate        forSearchEngines.htm
+					redirectionClass                org.cofax.SqlRedirection
+					"configGlossary:adminEmail"     ksm@pobox.com
+					jspFileTemplate                 articleTemplate.jsp
+					cachePagesRefresh               10
+					searchEngineRobotsDb            WEB-INF/robots.db
+					dataStoreConnUsageLimit         100
+					dataStoreLogLevel               debug
+					useJSP                          false
+					cachePackageTagsStore           200
+					cacheTemplatesTrack             100
+					useDataStore                    true
+					dataStorePassword               dataStoreTestQuery
+					dataStoreMaxConns               100
+					templateLoaderClass             org.cofax.FilesTemplateLoader
+					jspListTemplate                 listTemplate.jsp
+					cachePagesStore                 100
+					dataStoreClass                  org.cofax.SqlDataStore
+					dataStoreDriver                 com.microsoft.jdbc.sqlserver.SQLServerDriver
+					dataStoreTestQuery              "SET NOCOUNT ON;select test='test';"
+					dataStoreLogFile                /usr/local/tomcat/logs/datastore.log
+					maxUrlLength                    500
+					cachePackageTagsTrack           200
+					cachePackageTagsRefresh         60
+					dataStoreName                   cofax
+					dataStoreUrl                    "jdbc:microsoft:sqlserver://LOCALHOST:1433;DatabaseName=goon"
+					dataStoreUser                   sa
+					dataStoreInitConns              10
+					"configGlossary:installationAt" "Philadelphia, PA"
+					"configGlossary:poweredBy"      Cofax
+					"configGlossary:staticPath"     /content/static
+					templatePath                    templates
+					templateOverridePath            ""
+					defaultFileTemplate             articleTemplate.htm
+					cachePagesTrack                 200
+					"configGlossary:poweredByIcon"  /images/cofax.gif
+					cacheTemplatesRefresh           15
+					searchEngineListTemplate        forSearchEnginesList.htm
+					defaultListTemplate             listTemplate.htm
+				}
+			}
+			{
+				servlet-name  cofaxEmail
+				servlet-class org.cofax.cds.EmailServlet
+				init-param {
+					mailHost         mail1
+					mailHostOverride mail2
+				}
+			}
+			{
+				servlet-name  cofaxAdmin
+				servlet-class org.cofax.cds.AdminServlet
+			}
+			{
+				servlet-name  fileServlet
+				servlet-class org.cofax.cds.FileServlet
+			}
+			{
+				servlet-name  cofaxTools
+				servlet-class org.cofax.cms.CofaxToolsServlet
+				init-param {
+					templatePath        toolstemplates/
+					logLocation         /usr/local/tomcat/logs/CofaxTools.log
+					logMaxSize          ""
+					dataLogLocation     /usr/local/tomcat/logs/dataLog.log
+					dataLogMaxSize      ""
+					removePageCache     /content/admin/remove?cache=pages&id=
+					fileTransferFolder  /usr/local/tomcat/webapps/content/fileTransferFolder
+					lookInContext       1
+					adminGroupID        4
+					betaServer          true
+					log                 1
+					dataLog             1
+					removeTemplateCache /content/admin/remove?cache=templates&id=
+				}
+			}
+		]
+		servlet-mapping {
+			cofaxCDS    /
+			cofaxEmail  /cofaxutil/aemail/*
+			cofaxAdmin  /admin/*
+			fileServlet /static/*
+			cofaxTools  /tools/*
+		}
+		taglib {
+			taglib-uri      cofax.tld
+			taglib-location /WEB-INF/tlds/cofax.tld
+		}
+	}
+}
