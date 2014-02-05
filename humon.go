@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -10,10 +11,12 @@ import (
 	"unicode/utf8"
 )
 
-func indent(depth int) {
+func indent(depth int) *bytes.Buffer {
+	buffer := bytes.Buffer{}
 	for i := 0; i < depth; i++ {
-		fmt.Print("  ")
+		buffer.WriteString("  ")
 	}
+	return &buffer
 }
 
 func stripQuotes(s string) string {
@@ -280,8 +283,10 @@ func parseValue(p *parser) interface{} {
 	case Value:
 		return stripQuotes(p.tokenText)
 	case LBrace:
+		p.backup()
 		return parseObject(p)
 	case LBracket:
+		p.backup()
 		return parseArray(p)
 	}
 	return nil
@@ -327,19 +332,23 @@ func parseHumonValue(p *parser) interface{} {
 	case Value:
 		return p.tokenText
 	case LBrace:
+		p.backup()
 		return parseHumonObject(p)
 	case LBracket:
+		p.backup()
 		return parseHumonArray(p)
 	}
 	return nil
 }
 
-func printHumonValue(v interface{}, depth int) {
+func printHumonValue(v interface{}, depth int) *bytes.Buffer {
+	buffer := bytes.Buffer{}
+
 	switch t := v.(type) {
 	case string:
-		fmt.Print(t)
+		buffer.WriteString(t)
 	case []Pair:
-		fmt.Print("{\n")
+		buffer.WriteString("{\n")
 		l := 0
 		for _, p := range t {
 			if len(stripQuotes(p.key)) > l {
@@ -347,73 +356,84 @@ func printHumonValue(v interface{}, depth int) {
 			}
 		}
 		for _, p := range t {
-			indent(depth + 1)
-			fmt.Print(stripQuotes(p.key))
+			buffer.Write(indent(depth + 1).Bytes())
+			buffer.WriteString(stripQuotes(p.key))
 			switch p.value.(type) {
-			case []Pair, []interface{}:
-				fmt.Print(" ")
+			case []Pair:
+				buffer.WriteString(" ")
 			default:
 				for i := 0; i < l-len(stripQuotes(p.key))+1; i++ {
-					fmt.Print(" ")
+					buffer.WriteString(" ")
 				}
 			}
-			printHumonValue(p.value, depth+1)
-			fmt.Print("\n")
+			buffer.Write(printHumonValue(p.value, depth+1).Bytes())
+			buffer.WriteString("\n")
 		}
-		indent(depth)
-		fmt.Print("}")
+		buffer.Write(indent(depth).Bytes())
+		buffer.WriteString("}")
 	case []interface{}:
-		fmt.Print("[\n")
+		buffer.WriteString("[")
+		first := true
 		for _, e := range t {
-			indent(depth + 1)
-			printHumonValue(e, depth+1)
-			fmt.Print("\n")
+			//buffer.Write(indent(depth + 1).Bytes())
+			if !first {
+				buffer.WriteString(" ")
+			}
+			first = false
+			buffer.Write(printHumonValue(e, depth+1).Bytes())
+			//buffer.WriteString("\n")
 		}
-		indent(depth)
-		fmt.Print("]")
+		//buffer.Write(indent(depth).Bytes())
+		buffer.WriteString("]")
 	}
+
+	return &buffer
 }
 
-func printJsonValue(v interface{}, depth int) {
+func printJsonValue(v interface{}, depth int) *bytes.Buffer {
+	buffer := bytes.Buffer{}
+
 	switch t := v.(type) {
 	case string:
-		fmt.Print(quote(t))
+		buffer.WriteString(quote(t))
 	case []Pair:
-		fmt.Print("{")
+		buffer.WriteString("{")
 		first := true
 		for _, p := range t {
 			if !first {
-				fmt.Print(",")
+				buffer.WriteString(",")
 			}
 			first = false
-			fmt.Print("\n")
-			indent(depth + 1)
-			if p.key[0] != '"' && p.key[len(p.key)-1] != '"' {
+			buffer.WriteString("\n")
+			buffer.Write(indent(depth + 1).Bytes())
+			if len(p.key) < 2 || (p.key[0] != '"' && p.key[len(p.key)-1] != '"') {
 				p.key = "\"" + p.key + "\""
 			}
-			fmt.Print(p.key)
-			fmt.Print(": ")
-			printJsonValue(p.value, depth+1)
+			buffer.WriteString(p.key)
+			buffer.WriteString(": ")
+			buffer.Write(printJsonValue(p.value, depth+1).Bytes())
 		}
-		fmt.Print("\n")
-		indent(depth)
-		fmt.Print("}")
+		buffer.WriteString("\n")
+		buffer.Write(indent(depth).Bytes())
+		buffer.WriteString("}")
 	case []interface{}:
-		fmt.Print("[")
+		buffer.WriteString("[")
 		first := true
 		for _, e := range t {
 			if !first {
-				fmt.Print(",")
+				buffer.WriteString(",")
 			}
-			fmt.Print("\n")
+			buffer.WriteString("\n")
 			first = false
-			indent(depth + 1)
-			printJsonValue(e, depth+1)
+			buffer.Write(indent(depth + 1).Bytes())
+			buffer.Write(printJsonValue(e, depth+1).Bytes())
 		}
-		fmt.Print("\n")
-		indent(depth)
-		fmt.Print("]")
+		buffer.WriteString("\n")
+		buffer.Write(indent(depth).Bytes())
+		buffer.WriteString("]")
 	}
+
+	return &buffer
 }
 
 type Pair struct {
@@ -421,16 +441,18 @@ type Pair struct {
 	value interface{}
 }
 
-// @todo: single line primitive lists (vectors)
+// @todo: output primitive lines
+// @todo: use bufio for efficient output
+// @todo: handle invalid and unexpected tokens
 func main() {
 	file, _ := os.Open(os.Args[1])
 	data, _ := ioutil.ReadAll(file)
 
 	if strings.HasSuffix(os.Args[1], ".humon") {
 		r := parseHumon(string(data))
-		printJsonValue(r, 0)
+		fmt.Print(printJsonValue(r, 0).String())
 	} else if strings.HasSuffix(os.Args[1], ".json") {
 		r := parseJson(string(data))
-		printHumonValue(r, 0)
+		fmt.Print(printHumonValue(r, 0).String())
 	}
 }
