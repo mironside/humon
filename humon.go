@@ -192,7 +192,6 @@ func (p *parser) next() tokenType {
 
 func (p *parser) accept(t tokenType) bool {
 	v := p.next()
-	fmt.Print("v: ", p.tokenText, "\n")
 	if v == t {
 		return true
 	}
@@ -290,7 +289,7 @@ func printValue(v interface{}, depth int) {
 		}
 		for k, v := range t {
 			indent(depth + 1)
-			fmt.Print(k)
+			fmt.Print(stripQuotes(k))
 			switch v.(type) {
 			case map[string]interface{}, []interface{}:
 				fmt.Print(" ")
@@ -320,7 +319,6 @@ func main() {
 	file, _ := os.Open(os.Args[1])
 	data, _ := ioutil.ReadAll(file)
 	r := parse(string(data))
-	fmt.Print(r)
 	printValue(r, 0)
 	return
 }
