@@ -32,6 +32,7 @@ type lexer struct {
 	width     int
 	token     tokenType
 	tokenText string
+	json      bool
 }
 
 func (l *lexer) run() (tokenType, string) {
@@ -148,7 +149,7 @@ func lexName(l *lexer) stateFn {
 	for {
 		r := l.next()
 		// @todo: ignore :, when parsing humon format?
-		if r == 0 || unicode.IsSpace(r) || r == '{' || r == '}' || r == '[' || r == ']' || r == ':' || r == ',' {
+		if r == 0 || unicode.IsSpace(r) || r == '{' || r == '}' || r == '[' || r == ']' || (l.json && (r == ':' || r == ',')) {
 			l.backup()
 			if l.pos > l.start {
 				l.emit(Value)
@@ -212,6 +213,7 @@ func parseJson(input string) interface{} {
 	p := &parser{
 		lexer: &lexer{
 			input: input,
+			json:  true,
 		},
 	}
 	return parseValue(p)
@@ -252,7 +254,7 @@ func parseArray(p *parser) []interface{} {
 }
 
 func stripQuotes(s string) string {
-	if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' && !strings.ContainsAny(s, "\\{}[] \t:,") {
+	if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' && !strings.ContainsAny(s, "\\{}[] \t") {
 		s = s[1 : len(s)-1]
 	}
 	return s
