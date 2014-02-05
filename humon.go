@@ -282,7 +282,7 @@ func parseValue(p *parser) interface{} {
 
 func indent(depth int) {
 	for i := 0; i < depth; i++ {
-		fmt.Print("\t")
+		fmt.Print("  ")
 	}
 }
 
