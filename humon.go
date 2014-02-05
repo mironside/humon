@@ -10,6 +10,28 @@ import (
 	"unicode/utf8"
 )
 
+func indent(depth int) {
+	for i := 0; i < depth; i++ {
+		fmt.Print("  ")
+	}
+}
+
+func stripQuotes(s string) string {
+	if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' && !strings.ContainsAny(s, "\\{}[] \t") {
+		s = s[1 : len(s)-1]
+	}
+	return s
+}
+func quote(s string) string {
+	if len(s) < 2 || (s[0] != '"' && s[len(s)-1] != '"') {
+		_, err := strconv.ParseFloat(s, 64)
+		if s != "true" && s != "false" && s != "null" && err != nil {
+			s = "\"" + s + "\""
+		}
+	}
+	return s
+}
+
 type stateFn func(*lexer) stateFn
 
 type tokenType int
@@ -148,7 +170,6 @@ func lexString(l *lexer) stateFn {
 func lexName(l *lexer) stateFn {
 	for {
 		r := l.next()
-		// @todo: ignore :, when parsing humon format?
 		if r == 0 || unicode.IsSpace(r) || r == '{' || r == '}' || r == '[' || r == ']' || (l.json && (r == ':' || r == ',')) {
 			l.backup()
 			if l.pos > l.start {
@@ -219,8 +240,8 @@ func parseJson(input string) interface{} {
 	return parseValue(p)
 }
 
-func parseObject(p *parser) map[string]interface{} {
-	result := map[string]interface{}{}
+func parseObject(p *parser) []Pair {
+	result := []Pair{}
 	p.accept(LBrace)
 	first := true
 	for {
@@ -232,7 +253,7 @@ func parseObject(p *parser) map[string]interface{} {
 			k := p.tokenText
 			p.accept(Colon)
 			v := parseValue(p)
-			result[k] = v
+			result = append(result, Pair{key: k, value: v})
 		}
 		first = false
 	}
@@ -253,22 +274,6 @@ func parseArray(p *parser) []interface{} {
 	}
 }
 
-func stripQuotes(s string) string {
-	if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' && !strings.ContainsAny(s, "\\{}[] \t") {
-		s = s[1 : len(s)-1]
-	}
-	return s
-}
-func quote(s string) string {
-	if len(s) < 2 || (s[0] != '"' && s[len(s)-1] != '"') {
-		_, err := strconv.ParseFloat(s, 64)
-		if s != "true" && s != "false" && s != "null" && err != nil {
-			s = "\"" + s + "\""
-		}
-	}
-	return s
-}
-
 func parseValue(p *parser) interface{} {
 	t := p.next()
 	switch t {
@@ -282,54 +287,6 @@ func parseValue(p *parser) interface{} {
 	return nil
 }
 
-func indent(depth int) {
-	for i := 0; i < depth; i++ {
-		fmt.Print("  ")
-	}
-}
-
-func printJsonValue(v interface{}, depth int) {
-	switch t := v.(type) {
-	case string:
-		fmt.Print(quote(t))
-	case map[string]interface{}:
-		fmt.Print("{")
-		first := true
-		for k, v := range t {
-			if !first {
-				fmt.Print(",")
-			}
-			first = false
-			fmt.Print("\n")
-			indent(depth + 1)
-			if k[0] != '"' && k[len(k)-1] != '"' {
-				k = "\"" + k + "\""
-			}
-			fmt.Print(k)
-			fmt.Print(": ")
-			printJsonValue(v, depth+1)
-		}
-		fmt.Print("\n")
-		indent(depth)
-		fmt.Print("}")
-	case []interface{}:
-		fmt.Print("[")
-		first := true
-		for _, e := range t {
-			if !first {
-				fmt.Print(",")
-			}
-			fmt.Print("\n")
-			first = false
-			indent(depth + 1)
-			printJsonValue(e, depth+1)
-		}
-		fmt.Print("\n")
-		indent(depth)
-		fmt.Print("]")
-	}
-}
-
 func parseHumon(input string) interface{} {
 	p := &parser{
 		lexer: &lexer{
@@ -339,8 +296,8 @@ func parseHumon(input string) interface{} {
 	return parseHumonValue(p)
 }
 
-func parseHumonObject(p *parser) map[string]interface{} {
-	result := map[string]interface{}{}
+func parseHumonObject(p *parser) []Pair {
+	result := []Pair{}
 	p.accept(LBrace)
 	for {
 		if p.accept(RBrace) {
@@ -349,7 +306,7 @@ func parseHumonObject(p *parser) map[string]interface{} {
 		p.accept(Value)
 		k := p.tokenText
 		v := parseHumonValue(p)
-		result[k] = v
+		result = append(result, Pair{key: k, value: v})
 	}
 }
 
@@ -381,26 +338,26 @@ func printHumonValue(v interface{}, depth int) {
 	switch t := v.(type) {
 	case string:
 		fmt.Print(t)
-	case map[string]interface{}:
+	case []Pair:
 		fmt.Print("{\n")
 		l := 0
-		for k, _ := range t {
-			if len(stripQuotes(k)) > l {
-				l = len(stripQuotes(k))
+		for _, p := range t {
+			if len(stripQuotes(p.key)) > l {
+				l = len(stripQuotes(p.key))
 			}
 		}
-		for k, v := range t {
+		for _, p := range t {
 			indent(depth + 1)
-			fmt.Print(stripQuotes(k))
-			switch v.(type) {
-			case map[string]interface{}, []interface{}:
+			fmt.Print(stripQuotes(p.key))
+			switch p.value.(type) {
+			case []Pair, []interface{}:
 				fmt.Print(" ")
 			default:
-				for i := 0; i < l-len(stripQuotes(k))+1; i++ {
+				for i := 0; i < l-len(stripQuotes(p.key))+1; i++ {
 					fmt.Print(" ")
 				}
 			}
-			printHumonValue(v, depth+1)
+			printHumonValue(p.value, depth+1)
 			fmt.Print("\n")
 		}
 		indent(depth)
@@ -417,7 +374,54 @@ func printHumonValue(v interface{}, depth int) {
 	}
 }
 
-// @todo: ordered keys
+func printJsonValue(v interface{}, depth int) {
+	switch t := v.(type) {
+	case string:
+		fmt.Print(quote(t))
+	case []Pair:
+		fmt.Print("{")
+		first := true
+		for _, p := range t {
+			if !first {
+				fmt.Print(",")
+			}
+			first = false
+			fmt.Print("\n")
+			indent(depth + 1)
+			if p.key[0] != '"' && p.key[len(p.key)-1] != '"' {
+				p.key = "\"" + p.key + "\""
+			}
+			fmt.Print(p.key)
+			fmt.Print(": ")
+			printJsonValue(p.value, depth+1)
+		}
+		fmt.Print("\n")
+		indent(depth)
+		fmt.Print("}")
+	case []interface{}:
+		fmt.Print("[")
+		first := true
+		for _, e := range t {
+			if !first {
+				fmt.Print(",")
+			}
+			fmt.Print("\n")
+			first = false
+			indent(depth + 1)
+			printJsonValue(e, depth+1)
+		}
+		fmt.Print("\n")
+		indent(depth)
+		fmt.Print("]")
+	}
+}
+
+type Pair struct {
+	key   string
+	value interface{}
+}
+
+// @todo: single line primitive lists (vectors)
 func main() {
 	file, _ := os.Open(os.Args[1])
 	data, _ := ioutil.ReadAll(file)

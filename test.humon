@@ -5,14 +5,37 @@
         servlet-name  cofaxCDS
         servlet-class org.cofax.cds.CDSServlet
         init-param {
+          dataStoreDriver               com.microsoft.jdbc.sqlserver.SQLServerDriver
+          jspListTemplate               listTemplate.jsp
+          searchEngineRobotsDb          WEB-INF/robots.db
+          configGlossary:poweredBy      Cofax
+          cacheTemplatesStore           50
+          searchEngineListTemplate      forSearchEnginesList.htm
+          cachePackageTagsRefresh       60
+          configGlossary:staticPath     /content/static
+          configGlossary:adminEmail     ksm@pobox.com
+          jspFileTemplate               articleTemplate.jsp
+          dataStoreClass                org.cofax.SqlDataStore
+          dataStoreTestQuery            "SET NOCOUNT ON;select test='test';"
+          templateProcessorClass        org.cofax.WysiwygTemplate
+          cacheTemplatesRefresh         15
+          dataStoreUrl                  jdbc:microsoft:sqlserver://LOCALHOST:1433;DatabaseName=goon
+          cachePackageTagsStore         200
+          cacheTemplatesTrack           100
+          dataStoreInitConns            10
+          dataStoreMaxConns             100
           templateLoaderClass           org.cofax.FilesTemplateLoader
           templatePath                  templates
           templateOverridePath          ""
           cachePagesStore               100
           defaultListTemplate           listTemplate.htm
-          searchEngineFileTemplate      forSearchEngines.htm
-          dataStorePassword             dataStoreTestQuery
-          redirectionClass              org.cofax.SqlRedirection
+          configGlossary:poweredByIcon  /images/cofax.gif
+          useDataStore                  true
+          dataStoreUser                 sa
+          useJSP                        false
+          cachePackageTagsTrack         200
+          cachePagesDirtyRead           10
+          dataStoreName                 cofax
           defaultFileTemplate           articleTemplate.htm
           cachePagesRefresh             10
           dataStoreLogLevel             debug
@@ -21,32 +44,9 @@
           dataStoreLogFile              /usr/local/tomcat/logs/datastore.log
           dataStoreConnUsageLimit       100
           configGlossary:installationAt "Philadelphia, PA"
-          cacheTemplatesStore           50
-          searchEngineListTemplate      forSearchEnginesList.htm
-          cachePackageTagsRefresh       60
-          dataStoreDriver               com.microsoft.jdbc.sqlserver.SQLServerDriver
-          jspListTemplate               listTemplate.jsp
-          searchEngineRobotsDb          WEB-INF/robots.db
-          configGlossary:poweredBy      Cofax
-          templateProcessorClass        org.cofax.WysiwygTemplate
-          cacheTemplatesRefresh         15
-          dataStoreUrl                  jdbc:microsoft:sqlserver://LOCALHOST:1433;DatabaseName=goon
-          cachePackageTagsStore         200
-          cacheTemplatesTrack           100
-          dataStoreInitConns            10
-          dataStoreMaxConns             100
-          configGlossary:staticPath     /content/static
-          configGlossary:adminEmail     ksm@pobox.com
-          jspFileTemplate               articleTemplate.jsp
-          dataStoreClass                org.cofax.SqlDataStore
-          dataStoreTestQuery            "SET NOCOUNT ON;select test='test';"
-          configGlossary:poweredByIcon  /images/cofax.gif
-          useDataStore                  true
-          dataStoreUser                 sa
-          useJSP                        false
-          cachePackageTagsTrack         200
-          cachePagesDirtyRead           10
-          dataStoreName                 cofax
+          searchEngineFileTemplate      forSearchEngines.htm
+          dataStorePassword             dataStoreTestQuery
+          redirectionClass              org.cofax.SqlRedirection
         }
       }
       {
