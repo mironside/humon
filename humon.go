@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -258,7 +259,10 @@ func stripQuotes(s string) string {
 }
 func quote(s string) string {
 	if len(s) < 2 || (s[0] != '"' && s[len(s)-1] != '"') {
-		s = "\"" + s + "\""
+		_, err := strconv.ParseFloat(s, 64)
+		if s != "true" && s != "false" && s != "null" && err != nil {
+			s = "\"" + s + "\""
+		}
 	}
 	return s
 }
@@ -412,7 +416,6 @@ func printHumonValue(v interface{}, depth int) {
 }
 
 // @todo: ordered keys
-// @todo: humon to json
 func main() {
 	file, _ := os.Open(os.Args[1])
 	data, _ := ioutil.ReadAll(file)
