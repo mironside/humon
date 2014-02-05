@@ -1,20 +1,15 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
+/*
 func ScanJsonTokens(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// Skip leading spaces.
 	start := 0
@@ -425,32 +420,292 @@ func TestJsonTokenizer() {
 	_, v, err := parseValue(data)
 	fmt.Print(v, err)
 }
+*/
+
+type stateFn func(*lexer) stateFn
+
+type tokenType int
+
+const (
+	None tokenType = iota
+	Value
+	LBracket
+	RBracket
+	LBrace
+	RBrace
+	Colon
+	Comma
+)
+
+type lexer struct {
+	input     string
+	start     int
+	pos       int
+	width     int
+	token     tokenType
+	tokenText string
+}
+
+func (l *lexer) run() (tokenType, string) {
+	l.token = None
+	l.tokenText = ""
+	for state := lexWhitespace; state != nil; {
+		state = state(l)
+	}
+	return l.token, l.tokenText
+}
+
+func (l *lexer) next() rune {
+	if l.pos >= len(l.input) {
+		l.width = 0
+		return 0
+	}
+	r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+	l.width = w
+	l.pos += l.width
+	return r
+}
+
+func (l *lexer) peek() rune {
+	r := l.next()
+	l.pos -= l.width
+	return r
+}
+
+func (l *lexer) skip() {
+	l.start = l.pos
+}
+
+func (l *lexer) backup() {
+	l.pos -= l.width
+}
+
+func (l *lexer) emit(token tokenType) {
+	//fmt.Print(l.input[l.start:l.pos], "\n")
+	l.tokenText = l.input[l.start:l.pos]
+	l.token = token
+	l.start = l.pos
+}
+
+func (l *lexer) error(msg string) {
+	fmt.Print("Lex Error: ", msg, "\n")
+}
+
+func (l *lexer) accept(valid string) bool {
+	if strings.IndexRune(valid, l.next()) >= 0 {
+		return true
+	}
+	l.backup()
+	return false
+}
+
+func (l *lexer) acceptRun(valid string) bool {
+	accept := false
+	for strings.IndexRune(valid, l.next()) >= 0 {
+		accept = true
+	}
+	l.backup()
+	return accept
+}
+
+func lexWhitespace(l *lexer) stateFn {
+	l.acceptRun(" \t\r\n")
+	l.skip()
+	return lexText
+}
+
+func lexText(l *lexer) stateFn {
+	switch {
+	case l.accept("["):
+		l.emit(LBracket)
+		return nil
+	case l.accept("]"):
+		l.emit(RBracket)
+		return nil
+	case l.accept("{"):
+		l.emit(LBrace)
+		return nil
+	case l.accept("}"):
+		l.emit(RBrace)
+		return nil
+	case l.accept(","):
+		l.emit(Comma)
+		return nil
+	case l.accept(":"):
+		l.emit(Colon)
+		return nil
+	case l.accept("\""):
+		return lexString
+	default:
+		return lexName
+	}
+}
+
+func lexString(l *lexer) stateFn {
+	for {
+		switch l.next() {
+		case '"':
+			l.emit(Value)
+			return nil
+		case '\r', '\n':
+			l.error("Newline in string")
+			return nil
+		case 0:
+			l.error("EOF in string")
+			return nil
+		}
+	}
+}
+
+func lexName(l *lexer) stateFn {
+	for {
+		r := l.next()
+		if r == 0 || unicode.IsSpace(r) || r == '{' || r == '}' || r == '[' || r == ']' || r == ':' || r == ',' {
+			l.backup()
+			if l.pos > l.start {
+				l.emit(Value)
+			}
+			return nil
+		}
+	}
+}
+
+func lex(input string) {
+	l := &lexer{
+		input: input,
+	}
+	for {
+		token, _ := l.run()
+		if token == None {
+			break
+		}
+	}
+}
+
+type parseFn func(*parser) parseFn
+
+type parser struct {
+	token           tokenType
+	tokenText       string
+	lexer           *lexer
+	backupToken     tokenType
+	backupTokenText string
+}
+
+func (p *parser) next() tokenType {
+	if p.backupToken != None {
+		p.token = p.backupToken
+		p.tokenText = p.backupTokenText
+		p.backupToken = None
+		p.backupTokenText = ""
+	} else {
+		p.token, p.tokenText = p.lexer.run()
+	}
+	return p.token
+}
+
+func (p *parser) accept(t tokenType) bool {
+	if p.next() == t {
+		return true
+	}
+	p.backup()
+	return false
+}
+
+func (p *parser) backup() {
+	p.backupToken = p.token
+	p.backupTokenText = p.tokenText
+	p.token = None
+	p.tokenText = ""
+}
+
+func parse(input string) interface{} {
+	p := &parser{
+		lexer: &lexer{
+			input: input,
+		},
+	}
+	return parseValue(p)
+}
+
+func parseObject(p *parser) map[string]interface{} {
+	result := map[string]interface{}{}
+	p.accept(LBrace)
+	first := true
+	for {
+		if p.accept(RBrace) {
+			return result
+		}
+		if first || p.accept(Comma) {
+			p.accept(Value)
+			k := p.tokenText
+			p.accept(Colon)
+			v := parseValue(p)
+			result[k] = v
+		}
+	}
+}
+
+func parseArray(p *parser) []interface{} {
+	result := []interface{}{}
+	p.accept(LBracket)
+	first := true
+	for {
+		if p.accept(RBracket) {
+			return result
+		}
+		if first || p.accept(Comma) {
+			result = append(result, parseValue(p))
+		}
+		first = false
+	}
+}
+
+func parseValue(p *parser) interface{} {
+	t := p.next()
+	switch t {
+	case Value:
+		return p.tokenText
+	case LBrace:
+		return parseObject(p)
+	case LBracket:
+		return parseArray(p)
+	}
+	return nil
+}
 
 func main() {
-	TestJsonTokenizer()
+	file, _ := os.Open("C:/Users/colsen/Dropbox/test.json")
+	data, _ := ioutil.ReadAll(file)
+	//lex(string(data))
+	r := parse(string(data))
+	fmt.Print(r)
+	return
 
-	if len(os.Args) < 3 || (os.Args[1] != "json2humon" && os.Args[1] != "humon2json") {
-		fmt.Print("usage: humon.exe [json2humon|humon2json] <filename>\n")
-		return
-	}
+	/*
+		if len(os.Args) < 3 || (os.Args[1] != "json2humon" && os.Args[1] != "humon2json") {
+			fmt.Print("usage: humon.exe [json2humon|humon2json] <filename>\n")
+			return
+		}
 
-	file, err := os.Open(os.Args[2])
-	if err != nil {
-		fmt.Print("File Not Found\n")
-		return
-	}
+		file, err := os.Open(os.Args[2])
+		if err != nil {
+			fmt.Print("File Not Found\n")
+			return
+		}
 
-	start := time.Now()
-	switch os.Args[1] {
-	case "json2humon":
-		var d map[string]interface{}
-		data, _ := ioutil.ReadAll(file)
-		json.Unmarshal(data, &d)
-		dumpValue(d, 0)
-	case "humon2json":
-		text := convertHumon(file)
-		fmt.Fprint(os.Stdout, text)
-	}
-	end := time.Now()
-	fmt.Fprint(os.Stderr, "\n", end.Sub(start))
+		start := time.Now()
+		switch os.Args[1] {
+		case "json2humon":
+			var d map[string]interface{}
+			data, _ := ioutil.ReadAll(file)
+			json.Unmarshal(data, &d)
+			dumpValue(d, 0)
+		case "humon2json":
+			text := convertHumon(file)
+			fmt.Fprint(os.Stdout, text)
+		}
+		end := time.Now()
+		fmt.Fprint(os.Stderr, "\n", end.Sub(start))
+	*/
 }
