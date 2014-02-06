@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"runtime/pprof"
-	//"strconv"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -264,7 +264,8 @@ func parseArray(p *parser) []interface{} {
 			return result
 		}
 		if first || p.accept(Comma) {
-			result = append(result, parseValue(p))
+			v := parseValue(p)
+			result = append(result, v)
 		}
 		first = false
 	}
@@ -288,7 +289,8 @@ func parseValue(p *parser) interface{} {
 func parseHumon(input []byte) interface{} {
 	p := &parser{
 		lexer: &lexer{
-			input: input,
+			input:  input,
+			length: len(input),
 		},
 	}
 	return parseHumonValue(p)
@@ -385,13 +387,13 @@ func printHumonValue(buffer *bytes.Buffer, v interface{}, depth int) {
 
 func printJsonValue(buffer *bytes.Buffer, v interface{}, depth int) {
 	switch t := v.(type) {
-	case string:
-		quote := true
-		//_, err := strconv.ParseFloat(t, 64)
+	case []byte:
+		_, err := strconv.ParseFloat(string(t), 64)
+		quote := err != nil && (len(t) < 2 || (t[0] != '"' && t[len(t)-1] != '"'))
 		if quote {
 			buffer.WriteString("\"")
 		}
-		buffer.WriteString(t)
+		buffer.Write(t)
 		if quote {
 			buffer.WriteString("\"")
 		}
@@ -455,15 +457,15 @@ func main() {
 	start := time.Now()
 	if strings.HasSuffix(os.Args[1], ".humon") {
 		r := parseHumon(data)
-		buffer := bytes.Buffer{}
+		buffer := &bytes.Buffer{}
 		buffer.Grow(len(data))
-		printJsonValue(&buffer, r, 0)
+		printJsonValue(buffer, r, 0)
 		fmt.Print(buffer.String())
 	} else if strings.HasSuffix(os.Args[1], ".json") {
 		r := parseJson(data)
-		buffer := bytes.Buffer{}
+		buffer := &bytes.Buffer{}
 		buffer.Grow(len(data))
-		printHumonValue(&buffer, r, 0)
+		printHumonValue(buffer, r, 0)
 		fmt.Print(buffer.String())
 	}
 
