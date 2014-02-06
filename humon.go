@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strconv"
+	"runtime/pprof"
+	//"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -17,22 +19,6 @@ func indent(depth int) *bytes.Buffer {
 		buffer.WriteString("  ")
 	}
 	return &buffer
-}
-
-func stripQuotes(s string) string {
-	if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' && !strings.ContainsAny(s, "\\{}[] \t") {
-		s = s[1 : len(s)-1]
-	}
-	return s
-}
-func quote(s string) string {
-	if len(s) < 2 || (s[0] != '"' && s[len(s)-1] != '"') {
-		_, err := strconv.ParseFloat(s, 64)
-		if s != "true" && s != "false" && s != "null" && err != nil {
-			s = "\"" + s + "\""
-		}
-	}
-	return s
 }
 
 type stateFn func(*lexer) stateFn
@@ -51,18 +37,19 @@ const (
 )
 
 type lexer struct {
-	input     string
+	input     []byte
 	start     int
 	pos       int
 	width     int
 	token     tokenType
-	tokenText string
+	tokenText []byte
 	json      bool
+	length    int
 }
 
-func (l *lexer) run() (tokenType, string) {
+func (l *lexer) run() (tokenType, []byte) {
 	l.token = None
-	l.tokenText = ""
+	l.tokenText = nil
 	for state := lexWhitespace; state != nil; {
 		state = state(l)
 	}
@@ -70,19 +57,13 @@ func (l *lexer) run() (tokenType, string) {
 }
 
 func (l *lexer) next() rune {
-	if l.pos >= len(l.input) {
+	if l.pos >= l.length {
 		l.width = 0
 		return 0
 	}
-	r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+	r, w := utf8.DecodeRune(l.input[l.pos:])
 	l.width = w
 	l.pos += l.width
-	return r
-}
-
-func (l *lexer) peek() rune {
-	r := l.next()
-	l.pos -= l.width
 	return r
 }
 
@@ -104,50 +85,41 @@ func (l *lexer) error(msg string) {
 	fmt.Print("Lex Error: ", msg, "\n")
 }
 
-func (l *lexer) accept(valid string) bool {
-	if strings.IndexRune(valid, l.next()) >= 0 {
-		return true
-	}
-	l.backup()
-	return false
-}
-
-func (l *lexer) acceptRun(valid string) bool {
-	accept := false
-	for strings.IndexRune(valid, l.next()) >= 0 {
-		accept = true
-	}
-	l.backup()
-	return accept
-}
-
 func lexWhitespace(l *lexer) stateFn {
-	l.acceptRun(" \t\r\n")
+	for r := l.next(); ; r = l.next() {
+		if r != ' ' && r != '\t' && r != '\r' && r != '\n' {
+			break
+		}
+	}
+
+	l.backup()
 	l.skip()
 	return lexText
 }
 
 func lexText(l *lexer) stateFn {
-	switch {
-	case l.accept("["):
+	r := l.next()
+
+	switch r {
+	case '[':
 		l.emit(LBracket)
 		return nil
-	case l.accept("]"):
+	case ']':
 		l.emit(RBracket)
 		return nil
-	case l.accept("{"):
+	case '{':
 		l.emit(LBrace)
 		return nil
-	case l.accept("}"):
+	case '}':
 		l.emit(RBrace)
 		return nil
-	case l.accept(","):
+	case ',':
 		l.emit(Comma)
 		return nil
-	case l.accept(":"):
+	case ':':
 		l.emit(Colon)
 		return nil
-	case l.accept("\""):
+	case '"':
 		return lexString
 	default:
 		return lexName
@@ -158,7 +130,26 @@ func lexString(l *lexer) stateFn {
 	for {
 		switch l.next() {
 		case '"':
-			l.emit(Value)
+			s := l.input[l.start:l.pos]
+
+			unquote := true
+			invalid := []rune{'\\', '{', '}', '[', ']', ' ', '\t'}
+			for _, i := range invalid {
+				if bytes.IndexRune(s, i) >= 0 {
+					unquote = false
+					break
+				}
+			}
+
+			if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' && unquote {
+				l.start += 1
+				l.pos -= 1
+				l.emit(Value)
+				l.start -= 1
+				l.pos += 1
+			} else {
+				l.emit(Value)
+			}
 			return nil
 		case '\r', '\n':
 			l.error("Newline in string")
@@ -183,9 +174,10 @@ func lexName(l *lexer) stateFn {
 	}
 }
 
-func lex(input string) {
+func lex(input []byte) {
 	l := &lexer{
-		input: input,
+		input:  input,
+		length: len(input),
 	}
 	for {
 		token, _ := l.run()
@@ -199,10 +191,10 @@ type parseFn func(*parser) parseFn
 
 type parser struct {
 	token           tokenType
-	tokenText       string
+	tokenText       []byte
 	lexer           *lexer
 	backupToken     tokenType
-	backupTokenText string
+	backupTokenText []byte
 }
 
 func (p *parser) next() tokenType {
@@ -210,7 +202,7 @@ func (p *parser) next() tokenType {
 		p.token = p.backupToken
 		p.tokenText = p.backupTokenText
 		p.backupToken = None
-		p.backupTokenText = ""
+		p.backupTokenText = nil
 	} else {
 		p.token, p.tokenText = p.lexer.run()
 	}
@@ -230,21 +222,22 @@ func (p *parser) backup() {
 	p.backupToken = p.token
 	p.backupTokenText = p.tokenText
 	p.token = None
-	p.tokenText = ""
+	p.tokenText = []byte{}
 }
 
-func parseJson(input string) interface{} {
+func parseJson(input []byte) interface{} {
 	p := &parser{
 		lexer: &lexer{
-			input: input,
-			json:  true,
+			input:  input,
+			length: len(input),
+			json:   true,
 		},
 	}
 	return parseValue(p)
 }
 
 func parseObject(p *parser) []Pair {
-	result := []Pair{}
+	result := make([]Pair, 0, 10)
 	p.accept(LBrace)
 	first := true
 	for {
@@ -263,7 +256,7 @@ func parseObject(p *parser) []Pair {
 }
 
 func parseArray(p *parser) []interface{} {
-	result := []interface{}{}
+	result := make([]interface{}, 0, 10)
 	p.accept(LBracket)
 	first := true
 	for {
@@ -281,7 +274,7 @@ func parseValue(p *parser) interface{} {
 	t := p.next()
 	switch t {
 	case Value:
-		return stripQuotes(p.tokenText)
+		return p.tokenText
 	case LBrace:
 		p.backup()
 		return parseObject(p)
@@ -292,7 +285,7 @@ func parseValue(p *parser) interface{} {
 	return nil
 }
 
-func parseHumon(input string) interface{} {
+func parseHumon(input []byte) interface{} {
 	p := &parser{
 		lexer: &lexer{
 			input: input,
@@ -302,7 +295,7 @@ func parseHumon(input string) interface{} {
 }
 
 func parseHumonObject(p *parser) []Pair {
-	result := []Pair{}
+	result := make([]Pair, 0, 10)
 	p.accept(LBrace)
 	for {
 		if p.accept(RBrace) {
@@ -316,7 +309,7 @@ func parseHumonObject(p *parser) []Pair {
 }
 
 func parseHumonArray(p *parser) []interface{} {
-	result := []interface{}{}
+	result := make([]interface{}, 0, 10)
 	p.accept(LBracket)
 	for {
 		if p.accept(RBracket) {
@@ -341,32 +334,34 @@ func parseHumonValue(p *parser) interface{} {
 	return nil
 }
 
-func printHumonValue(v interface{}, depth int) *bytes.Buffer {
-	buffer := bytes.Buffer{}
-
+func printHumonValue(buffer *bytes.Buffer, v interface{}, depth int) {
 	switch t := v.(type) {
-	case string:
-		buffer.WriteString(t)
+	case []byte:
+		buffer.Write(t)
 	case []Pair:
 		buffer.WriteString("{\n")
 		l := 0
 		for _, p := range t {
-			if len(stripQuotes(p.key)) > l {
-				l = len(stripQuotes(p.key))
+			k := p.key
+			if len(k) > l {
+				l = len(k)
 			}
 		}
 		for _, p := range t {
 			buffer.Write(indent(depth + 1).Bytes())
-			buffer.WriteString(stripQuotes(p.key))
+			k := p.key
+			buffer.Write(k)
 			switch p.value.(type) {
 			case []Pair:
 				buffer.WriteString(" ")
 			default:
-				for i := 0; i < l-len(stripQuotes(p.key))+1; i++ {
+				m := len(k)
+				for i := 0; i < l-m+1; i++ {
 					buffer.WriteString(" ")
 				}
 			}
-			buffer.Write(printHumonValue(p.value, depth+1).Bytes())
+			buffer.WriteString(" ")
+			printHumonValue(buffer, p.value, depth+1)
 			buffer.WriteString("\n")
 		}
 		buffer.Write(indent(depth).Bytes())
@@ -380,22 +375,26 @@ func printHumonValue(v interface{}, depth int) *bytes.Buffer {
 				buffer.WriteString(" ")
 			}
 			first = false
-			buffer.Write(printHumonValue(e, depth+1).Bytes())
+			printHumonValue(buffer, e, depth+1)
 			//buffer.WriteString("\n")
 		}
 		//buffer.Write(indent(depth).Bytes())
 		buffer.WriteString("]")
 	}
-
-	return &buffer
 }
 
-func printJsonValue(v interface{}, depth int) *bytes.Buffer {
-	buffer := bytes.Buffer{}
-
+func printJsonValue(buffer *bytes.Buffer, v interface{}, depth int) {
 	switch t := v.(type) {
 	case string:
-		buffer.WriteString(quote(t))
+		quote := true
+		//_, err := strconv.ParseFloat(t, 64)
+		if quote {
+			buffer.WriteString("\"")
+		}
+		buffer.WriteString(t)
+		if quote {
+			buffer.WriteString("\"")
+		}
 	case []Pair:
 		buffer.WriteString("{")
 		first := true
@@ -407,11 +406,14 @@ func printJsonValue(v interface{}, depth int) *bytes.Buffer {
 			buffer.WriteString("\n")
 			buffer.Write(indent(depth + 1).Bytes())
 			if len(p.key) < 2 || (p.key[0] != '"' && p.key[len(p.key)-1] != '"') {
-				p.key = "\"" + p.key + "\""
+				buffer.WriteString("\"")
 			}
-			buffer.WriteString(p.key)
+			buffer.Write(p.key)
+			if len(p.key) < 2 || (p.key[0] != '"' && p.key[len(p.key)-1] != '"') {
+				buffer.WriteString("\"")
+			}
 			buffer.WriteString(": ")
-			buffer.Write(printJsonValue(p.value, depth+1).Bytes())
+			printJsonValue(buffer, p.value, depth+1)
 		}
 		buffer.WriteString("\n")
 		buffer.Write(indent(depth).Bytes())
@@ -425,19 +427,17 @@ func printJsonValue(v interface{}, depth int) *bytes.Buffer {
 			}
 			buffer.WriteString("\n")
 			first = false
-			buffer.Write(indent(depth + 1).Bytes())
-			buffer.Write(printJsonValue(e, depth+1).Bytes())
+			//buffer.Write(indent(depth + 1).Bytes())
+			printJsonValue(buffer, e, depth+1)
 		}
 		buffer.WriteString("\n")
-		buffer.Write(indent(depth).Bytes())
+		//buffer.Write(indent(depth).Bytes())
 		buffer.WriteString("]")
 	}
-
-	return &buffer
 }
 
 type Pair struct {
-	key   string
+	key   []byte
 	value interface{}
 }
 
@@ -445,14 +445,32 @@ type Pair struct {
 // @todo: use bufio for efficient output
 // @todo: handle invalid and unexpected tokens
 func main() {
+	f, _ := os.Create("humon.cpuprofile")
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+
 	file, _ := os.Open(os.Args[1])
 	data, _ := ioutil.ReadAll(file)
 
+	start := time.Now()
 	if strings.HasSuffix(os.Args[1], ".humon") {
-		r := parseHumon(string(data))
-		fmt.Print(printJsonValue(r, 0).String())
+		r := parseHumon(data)
+		buffer := bytes.Buffer{}
+		buffer.Grow(len(data))
+		printJsonValue(&buffer, r, 0)
+		fmt.Print(buffer.String())
 	} else if strings.HasSuffix(os.Args[1], ".json") {
-		r := parseJson(string(data))
-		fmt.Print(printHumonValue(r, 0).String())
+		r := parseJson(data)
+		buffer := bytes.Buffer{}
+		buffer.Grow(len(data))
+		printHumonValue(&buffer, r, 0)
+		fmt.Print(buffer.String())
 	}
+
+	f, _ = os.Create("humon.memprofile")
+	pprof.WriteHeapProfile(f)
+
+	end := time.Now()
+	dt := end.Sub(start)
+	fmt.Print(dt)
 }
