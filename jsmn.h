@@ -34,10 +34,10 @@ typedef enum {
  */
 typedef struct jsmntok_s {
 	jsmntype_t type;
-	int nameStart;
-	int nameEnd;
-	int valueStart;
-	int valueEnd;
+	const char *nameStart;
+	const char *nameEnd;
+	const char *valueStart;
+	const char *valueEnd;
 	int length;
 	struct jsmntok_s *parent;
 	struct jsmntok_s *next;
