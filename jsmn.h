@@ -21,12 +21,12 @@ typedef struct jsmntok_s {
 	const char *nameEnd;
 	const char *valueStart;
 	const char *valueEnd;
-	int length;
-	struct jsmntok_s *parent;
 	struct jsmntok_s *next;
 	struct jsmntok_s *child;
+	int length;
 } jsmntok_t;
 
 jsmnerr_t jsmn_parse(const char *text, int length, jsmntok_t **value);
+void jsmn_allocations(int *count, int *size);
 
 #endif /* __JSMN_H_ */

@@ -29,16 +29,23 @@ typedef struct {
 
 static jsmnerr_t jsmn_parse_value(lexer_t *lexer, jsmntok_t *value);
 
+static int s_allocSize = 0;
+static int s_allocCount = 0;
+void jsmn_allocations(int *count, int *size) {
+	*count = s_allocCount;
+	*size = s_allocSize;
+}
 
 static jsmntok_t *jsmn_alloc_token() {
 	jsmntok_t *tok;
 
 	// @todo: custom allocator
+	s_allocSize += sizeof( jsmntok_t );
+	s_allocCount++;
 	tok = (jsmntok_t *)malloc( sizeof( jsmntok_t ) );
 	tok->nameStart = tok->nameEnd = nullptr;
 	tok->valueStart = tok->valueEnd = nullptr;
 	tok->length = 0;
-	tok->parent = nullptr;
 	tok->next = nullptr;
 	tok->child = nullptr;
 	return tok;
@@ -188,8 +195,7 @@ static jsmnerr_t jsmn_lex(lexer_t *lexer, lextok_t *tok) {
 	case ',':
 		return jsmn_lex_control_char(lexer, tok);
 	case '\"':
-		jsmn_lex_string(lexer, tok);
-		break;
+		return jsmn_lex_string(lexer, tok);
 	default:
 		if (c=='t' || c=='f' || c=='n' || c=='-' || (c>='0' && c<='9'))
 			return jsmn_lex_primitive(lexer, tok);
