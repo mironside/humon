@@ -1,8 +1,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
-
 #include "jsmn.h"
+
+
+typedef enum {
+	TOKEN_LBRACE,
+	TOKEN_RBRACE,
+	TOKEN_LBRACKET,
+	TOKEN_RBRACKET,
+	TOKEN_COLON,
+	TOKEN_COMMA,
+	TOKEN_PRIMITIVE,
+	TOKEN_STRING,
+} toktype_t;
+
+
+typedef struct {
+	toktype_t type;
+	const char *start;
+	const char *end;
+} lextok_t;
+
+typedef struct {
+	const char *pos;
+	const char *prev;
+} lexer_t;
+
+static jsmnerr_t jsmn_parse_value(lexer_t *lexer, jsmntok_t *value);
 
 
 static jsmntok_t *jsmn_alloc_token() {
@@ -19,14 +44,15 @@ static jsmntok_t *jsmn_alloc_token() {
 	return tok;
 }
 
-jsmnerr_t jsmn_lex_primitive(lexer_t *lexer, lextok_t *tok) {
-	int start;
+
+static jsmnerr_t jsmn_lex_primitive(lexer_t *lexer, lextok_t *tok) {
+	const char *start;
 
 	start = lexer->pos;
-	for (; lexer->input[lexer->pos] != '\0'; lexer->pos++) {
+	for (; lexer->pos != '\0'; lexer->pos++) {
 		char c;
 
-		c = lexer->input[lexer->pos];
+		c = *lexer->pos;
 		switch(c) {
 		case '\t':
 		case '\r':
@@ -38,7 +64,7 @@ jsmnerr_t jsmn_lex_primitive(lexer_t *lexer, lextok_t *tok) {
 		case '}':
 			goto found;
 		}
-		if (lexer->input[lexer->pos] < 32 || lexer->input[lexer->pos] >= 127) {
+		if (*lexer->pos < 32 || *lexer->pos >= 127) {
 			lexer->pos = start;
 			return JSMN_ERROR_INVAL;
 		}
@@ -54,16 +80,17 @@ found:
 	return JSMN_SUCCESS;
 }
 
-jsmnerr_t jsmn_lex_string(lexer_t *lexer, lextok_t *tok) {
-	int start;
+
+static jsmnerr_t jsmn_lex_string(lexer_t *lexer, lextok_t *tok) {
+	const char *start;
 	
 	start = lexer->pos;
-	if ( lexer->input[lexer->pos] != '"' )
+	if ( *lexer->pos != '"' )
 		return JSMN_ERROR_INVAL;
 	lexer->pos++;
 
-	for (; lexer->input[lexer->pos] != '\0'; lexer->pos++) {
-		char c = lexer->input[lexer->pos];
+	for (; *lexer->pos != '\0'; lexer->pos++) {
+		char c = *lexer->pos;
 
 		/* Quote: end of string */
 		if (c == '\"') {
@@ -77,7 +104,7 @@ jsmnerr_t jsmn_lex_string(lexer_t *lexer, lextok_t *tok) {
 		/* Backslash: Quoted symbol expected */
 		if (c == '\\') {
 			lexer->pos++;
-			switch (lexer->input[lexer->pos]) {
+			switch (*lexer->pos) {
 				/* Allowed escaped symbols */
 				case '\"': case '/' : case '\\' : case 'b' :
 				case 'f' : case 'r' : case 'n'  : case 't' :
@@ -85,11 +112,12 @@ jsmnerr_t jsmn_lex_string(lexer_t *lexer, lextok_t *tok) {
 				/* Allows escaped symbol \uXXXX */
 				case 'u':
 					lexer->pos++;
-					for(int i = 0; i < 4 && lexer->input[lexer->pos] != '\0'; i++) {
+					for(int i = 0; i < 4 && *lexer->pos != '\0'; i++) {
 						/* If it isn't a hex character we have an error */
-						if(!((lexer->input[lexer->pos] >= 48 && lexer->input[lexer->pos] <= 57) || /* 0-9 */
-									(lexer->input[lexer->pos] >= 65 && lexer->input[lexer->pos] <= 70) || /* A-F */
-									(lexer->input[lexer->pos] >= 97 && lexer->input[lexer->pos] <= 102))) { /* a-f */
+						c = *lexer->pos;
+						if(!((c >= 48 && c <= 57) || /* 0-9 */
+							(c >= 65 && c <= 70) || /* A-F */
+							(c >= 97 && c <= 102))) { /* a-f */
 							lexer->pos = start;
 							return JSMN_ERROR_INVAL;
 						}
@@ -108,13 +136,11 @@ jsmnerr_t jsmn_lex_string(lexer_t *lexer, lextok_t *tok) {
 	return JSMN_ERROR_INVAL;
 }
 
-jsmnerr_t jsmn_lex_control_char(lexer_t *lexer, lextok_t *tok) {
-	char c;
+
+static jsmnerr_t jsmn_lex_control_char(lexer_t *lexer, lextok_t *tok) {
 	toktype_t type;
 
-	c = lexer->input[lexer->pos];
-
-	switch(c) {
+	switch(*lexer->pos) {
 	case '{': type = TOKEN_LBRACE; break;
 	case '}': type = TOKEN_RBRACE; break;
 	case '[': type = TOKEN_LBRACKET; break;
@@ -132,24 +158,26 @@ jsmnerr_t jsmn_lex_control_char(lexer_t *lexer, lextok_t *tok) {
 	return JSMN_SUCCESS;
 }
 
-void jsmn_lex_backup(lexer_t *lexer) {
+
+static void jsmn_lex_backup(lexer_t *lexer) {
 	lexer->pos = lexer->prev;
 }
 
-jsmnerr_t jsmn_lex(lexer_t *lexer, lextok_t *tok) {
+
+static jsmnerr_t jsmn_lex(lexer_t *lexer, lextok_t *tok) {
 	// whitespace
-	for(;lexer->input[lexer->pos] != '\0'; lexer->pos++) {
-		if(lexer->input[lexer->pos] > 32)
+	for(;*lexer->pos != '\0'; lexer->pos++) {
+		if(*lexer->pos > 32)
 			break;
 	}
 
-	if(lexer->input[lexer->pos] == '\0') {
+	if(*lexer->pos == '\0') {
 		// EOF!
 		return JSMN_SUCCESS;
 	}
 
 	lexer->prev = lexer->pos;
-	char c = lexer->input[lexer->pos];
+	char c = *lexer->pos;
 
 	switch(c) {
 	case '[':
@@ -170,7 +198,8 @@ jsmnerr_t jsmn_lex(lexer_t *lexer, lextok_t *tok) {
 	return JSMN_ERROR_INVAL;
 }
 
-jsmnerr_t jsmn_parse_object(lexer_t *lexer, jsmntok_t *value)
+
+static jsmnerr_t jsmn_parse_object(lexer_t *lexer, jsmntok_t *value)
 {
 	jsmntok_t *last;
 	bool first;
@@ -197,8 +226,8 @@ jsmnerr_t jsmn_parse_object(lexer_t *lexer, jsmntok_t *value)
 		if ( tok.type != TOKEN_STRING ) return JSMN_ERROR_INVAL;
 
 		child = jsmn_alloc_token();
-		child->nameStart = lexer->input + tok.start;
-		child->nameEnd = lexer->input + tok.end;
+		child->nameStart = tok.start;
+		child->nameEnd = tok.end;
 
 		jsmn_lex( lexer, &tok );
 		if ( tok.type != TOKEN_COLON ) return JSMN_ERROR_INVAL;
@@ -214,7 +243,8 @@ jsmnerr_t jsmn_parse_object(lexer_t *lexer, jsmntok_t *value)
 	}
 }
 
-jsmnerr_t jsmn_parse_array(lexer_t *lexer, jsmntok_t *value)
+
+static jsmnerr_t jsmn_parse_array(lexer_t *lexer, jsmntok_t *value)
 {
 	jsmntok_t *last;
 	bool first;
@@ -252,7 +282,8 @@ jsmnerr_t jsmn_parse_array(lexer_t *lexer, jsmntok_t *value)
 	}
 }
 
-jsmnerr_t jsmn_parse_value(lexer_t *lexer, jsmntok_t *value) {
+
+static jsmnerr_t jsmn_parse_value(lexer_t *lexer, jsmntok_t *value) {
 	lextok_t tok;
 
 	if(jsmn_lex(lexer, &tok) != JSMN_SUCCESS) return JSMN_ERROR_INVAL;
@@ -266,15 +297,25 @@ jsmnerr_t jsmn_parse_value(lexer_t *lexer, jsmntok_t *value) {
 		return jsmn_parse_array(lexer, value);
 	case TOKEN_STRING:
 		value->type = JSMN_STRING;
-		value->valueStart = lexer->input + tok.start;
-		value->valueEnd = lexer->input + tok.end;
+		value->valueStart = tok.start;
+		value->valueEnd = tok.end;
 		return JSMN_SUCCESS;
 	case TOKEN_PRIMITIVE:
 		value->type = JSMN_PRIMITIVE;
-		value->valueStart = lexer->input + tok.start;
-		value->valueEnd = lexer->input + tok.end;
+		value->valueStart = tok.start;
+		value->valueEnd = tok.end;
 		return JSMN_SUCCESS;
 	}
 
 	return JSMN_ERROR_INVAL;
 }
+
+
+jsmnerr_t jsmn_parse(const char *text, int length, jsmntok_t **value) {
+	lexer_t lexer;
+	lexer.prev = lexer.pos = text;
+
+	*value = jsmn_alloc_token();
+	return jsmn_parse_value( &lexer, *value );
+}
+
