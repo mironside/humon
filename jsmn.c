@@ -4,23 +4,28 @@
 
 #include "jsmn.h"
 
+
 /**
  * Allocates a fresh unused token from the token pull.
  */
-static jsmntok_t *jsmn_alloc_token(jsmn_parser *parser) {
+static jsmntok_t *jsmn_alloc_token() {
 	jsmntok_t *tok;
 
 	// @todo: custom allocator
 	tok = (jsmntok_t *)malloc( sizeof( jsmntok_t ) );
-	tok->start = tok->end = -1;
+	tok->nameStart = tok->nameEnd = -1;
+	tok->valueStart = tok->valueEnd = -1;
 	tok->length = 0;
 	tok->parent = nullptr;
+	tok->next = nullptr;
+	tok->child = nullptr;
 	return tok;
 }
 
 /**
  * Fills token type and boundaries.
  */
+/*
 static void jsmn_fill_token(jsmntok_t *token, jsmntype_t type, 
                             int start, int end) {
 	token->type = type;
@@ -28,98 +33,178 @@ static void jsmn_fill_token(jsmntok_t *token, jsmntype_t type,
 	token->end = end;
 	token->length = 0;
 }
+*/
 
 /**
  * Fills next available token with JSON primitive.
  */
-static jsmnerr_t jsmn_parse_primitive(jsmn_parser *parser, const char *js) {
-	jsmntok_t *token;
+jsmnerr_t jsmn_lex_primitive(lexer_t *lexer, lextok_t *tok) {
 	int start;
 
-	start = parser->pos;
+	start = lexer->pos;
+	for (; lexer->input[lexer->pos] != '\0'; lexer->pos++) {
+		char c;
 
-	for (; js[parser->pos] != '\0'; parser->pos++) {
-		switch (js[parser->pos]) {
-			case '\t' : case '\r' : case '\n' : case ' ' :
-			case ','  : case ']'  : case '}' :
-				goto found;
+		c = lexer->input[lexer->pos];
+		switch(c) {
+		case '\t':
+		case '\r':
+		case '\n':
+		case ' ':
+		case ':':
+		case ',':
+		case ']':
+		case '}':
+			goto found;
 		}
-		if (js[parser->pos] < 32 || js[parser->pos] >= 127) {
-			parser->pos = start;
+		if (lexer->input[lexer->pos] < 32 || lexer->input[lexer->pos] >= 127) {
+			lexer->pos = start;
 			return JSMN_ERROR_INVAL;
 		}
 	}
 
-	/* In strict mode primitive must be followed by a comma/object/array */
-	parser->pos = start;
-	return JSMN_ERROR_PART;
+	if ( start == lexer->pos )
+		return JSMN_ERROR_INVAL;
 
 found:
-	token = jsmn_alloc_token(parser);
-	if (token == NULL) {
-		parser->pos = start;
-		return JSMN_ERROR_NOMEM;
-	}
-	jsmn_fill_token(token, JSMN_PRIMITIVE, start, parser->pos);
-	token->parent = parser->toksuper;
-	parser->pos--;
+	tok->type = TOKEN_PRIMITIVE;
+	tok->start = start;
+	tok->end = lexer->pos;
 	return JSMN_SUCCESS;
 }
 
 /**
  * Filsl next token with JSON string.
  */
-static jsmnerr_t jsmn_parse_string(jsmn_parser *parser, const char *js, int *begin, int *end) {
+jsmnerr_t jsmn_lex_string(lexer_t *lexer, lextok_t *tok) {
 	int start;
 	
-	
-	start = parser->pos;
-	parser->pos++;
+	start = lexer->pos;
+	if ( lexer->input[lexer->pos] != '"' )
+		return JSMN_ERROR_INVAL;
+	lexer->pos++;
 
-	/* Skip starting quote */
-	for (; js[parser->pos] != '\0'; parser->pos++) {
-		char c = js[parser->pos];
+	for (; lexer->input[lexer->pos] != '\0'; lexer->pos++) {
+		char c = lexer->input[lexer->pos];
 
 		/* Quote: end of string */
 		if (c == '\"') {
-			*begin = start+1;
-			*end = parser->pos;
+			tok->type = TOKEN_STRING;
+			tok->start = start+1;
+			tok->end = lexer->pos;
+			lexer->pos++;
 			return JSMN_SUCCESS;
 		}
 
 		/* Backslash: Quoted symbol expected */
 		if (c == '\\') {
-			parser->pos++;
-			switch (js[parser->pos]) {
+			lexer->pos++;
+			switch (lexer->input[lexer->pos]) {
 				/* Allowed escaped symbols */
 				case '\"': case '/' : case '\\' : case 'b' :
 				case 'f' : case 'r' : case 'n'  : case 't' :
 					break;
 				/* Allows escaped symbol \uXXXX */
 				case 'u':
-					parser->pos++;
-					for(int i = 0; i < 4 && js[parser->pos] != '\0'; i++) {
+					lexer->pos++;
+					for(int i = 0; i < 4 && lexer->input[lexer->pos] != '\0'; i++) {
 						/* If it isn't a hex character we have an error */
-						if(!((js[parser->pos] >= 48 && js[parser->pos] <= 57) || /* 0-9 */
-									(js[parser->pos] >= 65 && js[parser->pos] <= 70) || /* A-F */
-									(js[parser->pos] >= 97 && js[parser->pos] <= 102))) { /* a-f */
-							parser->pos = start;
+						if(!((lexer->input[lexer->pos] >= 48 && lexer->input[lexer->pos] <= 57) || /* 0-9 */
+									(lexer->input[lexer->pos] >= 65 && lexer->input[lexer->pos] <= 70) || /* A-F */
+									(lexer->input[lexer->pos] >= 97 && lexer->input[lexer->pos] <= 102))) { /* a-f */
+							lexer->pos = start;
 							return JSMN_ERROR_INVAL;
 						}
-						parser->pos++;
+						lexer->pos++;
 					}
-					parser->pos--;
+					lexer->pos--;
 					break;
 				/* Unexpected symbol */
 				default:
-					parser->pos = start;
+					lexer->pos = start;
 					return JSMN_ERROR_INVAL;
 			}
 		}
 	}
-	parser->pos = start;
-	return JSMN_ERROR_PART;
+
+	return JSMN_ERROR_INVAL;
 }
+
+jsmnerr_t jsmn_lex_control_char(lexer_t *lexer, lextok_t *tok) {
+	char c;
+	toktype_t type;
+
+	c = lexer->input[lexer->pos];
+
+	switch(c) {
+	case '{':
+		type = TOKEN_LBRACE;
+		break;
+	case '}':
+		type = TOKEN_RBRACE;
+		break;
+	case '[':
+		type = TOKEN_LBRACKET;
+		break;
+	case ']':
+		type = TOKEN_RBRACKET;
+		break;
+	case ':':
+		type = TOKEN_COLON;
+		break;
+	case ',':
+		type = TOKEN_COMMA;
+		break;
+	default:
+		return JSMN_ERROR_INVAL;
+	}
+
+	tok->type = type;
+	tok->start = lexer->pos;
+	tok->end = lexer->pos+1;
+	lexer->pos++;
+
+	return JSMN_SUCCESS;
+}
+
+void jsmn_lex_backup(lexer_t *lexer) {
+	lexer->pos = lexer->prev;
+}
+
+jsmnerr_t jsmn_lex(lexer_t *lexer, lextok_t *tok) {
+	// whitespace
+	for(;lexer->input[lexer->pos] != '\0'; lexer->pos++) {
+		if(lexer->input[lexer->pos] > 32)
+			break;
+	}
+
+	if(lexer->input[lexer->pos] == '\0') {
+		// EOF!
+		return JSMN_SUCCESS;
+	}
+
+	lexer->prev = lexer->pos;
+	char c = lexer->input[lexer->pos];
+
+	switch(c) {
+	case '[':
+	case '{':
+	case ']':
+	case '}':
+	case ':':
+	case ',':
+		return jsmn_lex_control_char(lexer, tok);
+	case '\"':
+		jsmn_lex_string(lexer, tok);
+		break;
+	default:
+		if (c=='t' || c=='f' || c=='n' || c=='-' || (c>='0' && c<='9'))
+			return jsmn_lex_primitive(lexer, tok);
+	}
+
+	return JSMN_ERROR_INVAL;
+}
+
 /*
 static const char *parse_object(cJSON *item,const char *value)
 {
@@ -185,39 +270,44 @@ static const char *parse_object(cJSON *item,const char *value)
 }
 */
 
-jsmnerr_t jsmn_parse_object(jsmn_parser *parser, const char *js, int length, jsmntok_t *value)
+jsmnerr_t jsmn_parse_object(lexer_t *lexer, jsmntok_t *value)
 {
 	/*
 	object := LBRACE keyvals? RBRACE
 	keyvals := keyvals COMMA keyval|keyval
 	keyval := STRING COLON value
 	*/
-	item_t *last;
-	token_t token;
+	jsmntok_t *last;
+	bool first;
+	lextok_t tok;
 
-	lex( &token );
-	if ( token != LBRACE ) return ERROR;
+	jsmn_lex( lexer, &tok );
+	if ( tok.type != TOKEN_LBRACE ) return JSMN_ERROR_INVAL;
 
 	last = nullptr;
-	for ( ;; )
-	{
-		lex( &token );
-		if ( token == RBRACE ) return SUCCESS;
+	first = true;
+	for ( ;; ) {
+		jsmntok_t *child;
 
-		if ( !first )
-		{
-			if ( token != COMMA ) return ERROR;
-			lex( &token );
+		jsmn_lex( lexer, &tok );
+		if ( tok.type == TOKEN_RBRACE ) return JSMN_SUCCESS;
+
+		if ( !first ) {
+			if ( tok.type != TOKEN_COMMA ) return JSMN_ERROR_INVAL;
+			jsmn_lex( lexer, &tok );
 		}	
 		first = false;
 
-		if ( token != STRING ) return ERROR;
-		child->name = token;
+		if ( tok.type != TOKEN_STRING ) return JSMN_ERROR_INVAL;
 
-		lex( &token );
-		if ( token != COLON ) return ERROR;
+		child = jsmn_alloc_token();
+		child->nameStart = tok.start;
+		child->nameEnd = tok.end;
 
-		if ( !parse_value( &child ) return ERROR;
+		jsmn_lex( lexer, &tok );
+		if ( tok.type != TOKEN_COLON ) return JSMN_ERROR_INVAL;
+
+		if ( jsmn_parse_value( lexer, child ) != JSMN_SUCCESS ) return JSMN_ERROR_INVAL;
 
 		if ( value->child == nullptr )
 			value->child = child;
@@ -227,29 +317,32 @@ jsmnerr_t jsmn_parse_object(jsmn_parser *parser, const char *js, int length, jsm
 	}
 }
 
-jsmnerr_t jsmn_parse_array(jsmn_parser *parser, const char *js, int length, jsmntok_t *value)
+jsmnerr_t jsmn_parse_array(lexer_t *lexer, jsmntok_t *value)
 {
 	/*
 	array := LBRACKET values? RBRACKET
 	values := values COMMA value|value
 	*/
-	item_t *last;
-	token_t token;
+	jsmntok_t *last;
+	bool first;
+	lextok_t tok;
 
-	lex( &token );
-	if ( token != LBRACKET ) return ERROR;
+	jsmn_lex( lexer, &tok );
+	if ( tok.type != TOKEN_LBRACKET ) return JSMN_ERROR_INVAL;
 
 	last = nullptr;
-	for ( ;; )
-	{
-		lex( &token );
-		if ( token == RBRACKET ) return SUCCESS;
+	first = true;
+	for ( ;; ) {
+		jsmntok_t *child;
 
-		if ( !first && token != COMMA ) return ERROR;
+		jsmn_lex( lexer, &tok );
+		if ( tok.type == TOKEN_RBRACKET ) return JSMN_SUCCESS;
+
+		if ( !first && tok.type != TOKEN_COMMA ) return JSMN_ERROR_INVAL;
 		first = false;
 
-		child = new_item();
-		if ( !parse_value( &child ) ) return ERROR;
+		child = jsmn_alloc_token();
+		if ( jsmn_parse_value( lexer, child ) != JSMN_SUCCESS ) return JSMN_ERROR_INVAL;
 
 		if ( value->child == nullptr )
 			value->child = child;
@@ -259,6 +352,34 @@ jsmnerr_t jsmn_parse_array(jsmn_parser *parser, const char *js, int length, jsmn
 	}
 }
 
+jsmnerr_t jsmn_parse_value(lexer_t *lexer, jsmntok_t *value) {
+	lextok_t tok;
+
+	if(jsmn_lex(lexer, &tok) != JSMN_SUCCESS) return JSMN_ERROR_INVAL;
+
+	switch(tok.type) {
+	case TOKEN_LBRACE:
+		jsmn_lex_backup(lexer);
+		return jsmn_parse_object(lexer, value);
+	case TOKEN_LBRACKET:
+		jsmn_lex_backup(lexer);
+		return jsmn_parse_array(lexer, value);
+	case TOKEN_STRING:
+		value->type = JSMN_STRING;
+		value->valueStart = tok.start;
+		value->valueEnd = tok.end;
+		return JSMN_SUCCESS;
+	case TOKEN_PRIMITIVE:
+		value->type = JSMN_PRIMITIVE;
+		value->valueStart = tok.start;
+		value->valueEnd = tok.end;
+		return JSMN_SUCCESS;
+	}
+
+	return JSMN_ERROR_INVAL;
+}
+
+#if 0
 /**
  * Parse JSON string and fill tokens.
  */
@@ -377,4 +498,4 @@ void jsmn_init(jsmn_parser *parser) {
 	parser->pos = 0;
 	parser->toksuper = nullptr;
 }
-
+#endif

@@ -34,12 +34,14 @@ typedef enum {
  */
 typedef struct jsmntok_s {
 	jsmntype_t type;
-	int start;
-	int end;
 	int nameStart;
 	int nameEnd;
+	int valueStart;
+	int valueEnd;
 	int length;
 	struct jsmntok_s *parent;
+	struct jsmntok_s *next;
+	struct jsmntok_s *child;
 } jsmntok_t;
 
 /**
@@ -60,6 +62,36 @@ void jsmn_init(jsmn_parser *parser);
  * Run JSON parser. It parses a JSON data string into and array of tokens, each describing
  * a single JSON object.
  */
-jsmnerr_t jsmn_parse_value(jsmn_parser *parser, const char *js, int length, jsmntok_t *token);
+
+
+typedef enum {
+	TOKEN_LBRACE,
+	TOKEN_RBRACE,
+	TOKEN_LBRACKET,
+	TOKEN_RBRACKET,
+	TOKEN_COLON,
+	TOKEN_COMMA,
+	TOKEN_PRIMITIVE,
+	TOKEN_STRING,
+} toktype_t;
+
+
+typedef struct {
+	toktype_t type;
+	int start;
+	int end;
+} lextok_t;
+
+typedef struct {
+	const char *input;
+	int pos;
+	int prev;
+} lexer_t;
+
+jsmnerr_t jsmn_lex_primitive(lexer_t *lexer, lextok_t *tok);
+jsmnerr_t jsmn_lex_string(lexer_t *lexer, lextok_t *tok);
+jsmnerr_t jsmn_lex(lexer_t *lexer, lextok_t *tok);
+jsmnerr_t jsmn_parse_value(lexer_t *lexer, jsmntok_t *value);
+
 
 #endif /* __JSMN_H_ */
